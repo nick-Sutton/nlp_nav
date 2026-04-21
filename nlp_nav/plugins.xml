@@ -1,0 +1,9 @@
+<library path="dwa_controller">
+  <class name="nlp_nav/DWAController"
+         type="nlp_nav::DWAController"
+         base_class_type="nav2_core::Controller">
+    <description>
+      Dynamic Window Approach (DWA) local controller plugin for Nav2.
+    </description>
+  </class>
+</library>

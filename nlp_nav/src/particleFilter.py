@@ -3,7 +3,8 @@ import rclpy
 from rclpy.node import Node
 from nav_msgs.msg import Odometry, OccupancyGrid
 from sensor_msgs.msg import LaserScan
-from geometry_msgs.msg import PoseStamped, Pose, PoseArray
+from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped, Pose, PoseArray, TransformStamped
+import tf2_ros
 import numpy as np
 import math
 import random
@@ -28,13 +29,15 @@ class ParticleFilterNode(Node):
         self.create_subscription(Odometry, '/odom', self.odom_callback, 10)
         self.create_subscription(LaserScan, '/scan', self.scan_callback, 10)
 
-        self.pose_pub = self.create_publisher(PoseStamped, '/estimated_pose', 10)
+        self.pose_pub = self.create_publisher(PoseWithCovarianceStamped, '/amcl_pose', 10)
         self.particle_pub = self.create_publisher(PoseArray, '/pf_particle_cloud', 10)
+        self.tf_broadcaster = tf2_ros.TransformBroadcaster(self)
         self.get_logger().info("Particle Filter node initialized")
 
         self.map_init()
 
         self.prev_odom_pose = None
+        self.current_odom_pose = None
         self.u = None
         self.have_u = False
 
@@ -44,7 +47,7 @@ class ParticleFilterNode(Node):
             return
 
         from ament_index_python.packages import get_package_share_directory
-        pkg_share = get_package_share_directory('particle-filter-ros2')
+        pkg_share = get_package_share_directory('nlp_nav')
         yaml_path = os.path.join(pkg_share, 'maps', 'map.yaml')
 
         with open(yaml_path, 'r') as f:
@@ -280,14 +283,53 @@ class ParticleFilterNode(Node):
         cos_sum = np.average(np.cos(self.particles[:, 2]), weights=self.weights)
         theta_mean = math.atan2(sin_sum, cos_sum)
 
-        pose_msg = PoseStamped()
-        pose_msg.header.stamp = self.get_clock().now().to_msg()
-        pose_msg.header.frame_id = "map"
-        pose_msg.pose.position.x = float(x_mean)
-        pose_msg.pose.position.y = float(y_mean)
-        pose_msg.pose.orientation.z = math.sin(theta_mean / 2.0)
-        pose_msg.pose.orientation.w = math.cos(theta_mean / 2.0)
-        self.pose_pub.publish(pose_msg)
+        # Compute per-axis variance from the particle spread
+        x_var     = float(np.average((self.particles[:, 0] - x_mean) ** 2, weights=self.weights))
+        y_var     = float(np.average((self.particles[:, 1] - y_mean) ** 2, weights=self.weights))
+        theta_var = float(np.average(
+            (np.arctan2(
+                np.sin(self.particles[:, 2] - theta_mean),
+                np.cos(self.particles[:, 2] - theta_mean)
+            )) ** 2,
+            weights=self.weights
+        ))
+
+        msg = PoseWithCovarianceStamped()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = "map"
+        msg.pose.pose.position.x = float(x_mean)
+        msg.pose.pose.position.y = float(y_mean)
+        msg.pose.pose.orientation.z = math.sin(theta_mean / 2.0)
+        msg.pose.pose.orientation.w = math.cos(theta_mean / 2.0)
+        # Row-major 6x6 covariance [x, y, z, roll, pitch, yaw]
+        msg.pose.covariance[0]  = x_var      # x-x
+        msg.pose.covariance[7]  = y_var      # y-y
+        msg.pose.covariance[35] = theta_var  # yaw-yaw
+        self.pose_pub.publish(msg)
+        self._broadcast_map_to_odom(x_mean, y_mean, theta_mean, msg.header.stamp)
+
+    def _broadcast_map_to_odom(self, map_x, map_y, map_yaw, stamp):
+        """Publish the dynamic map->odom TF derived from the particle filter estimate."""
+        if self.current_odom_pose is None:
+            return
+
+        ox, oy, oth = self.current_odom_pose
+
+        # T_map_odom = T_map_base * inv(T_odom_base)
+        dth = map_yaw - oth
+        tx = map_x - (ox * math.cos(dth) - oy * math.sin(dth))
+        ty = map_y - (ox * math.sin(dth) + oy * math.cos(dth))
+
+        t = TransformStamped()
+        t.header.stamp = stamp
+        t.header.frame_id = 'map'
+        t.child_frame_id = 'odom'
+        t.transform.translation.x = tx
+        t.transform.translation.y = ty
+        t.transform.translation.z = 0.0
+        t.transform.rotation.z = math.sin(dth / 2.0)
+        t.transform.rotation.w = math.cos(dth / 2.0)
+        self.tf_broadcaster.sendTransform(t)
 
     def publish_particle_cloud(self):
         """Publish all particles as a PoseArray for visualization in RViz."""
