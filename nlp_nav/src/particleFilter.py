@@ -283,14 +283,13 @@ class ParticleFilterNode(Node):
         cos_sum = np.average(np.cos(self.particles[:, 2]), weights=self.weights)
         theta_mean = math.atan2(sin_sum, cos_sum)
 
-        # Compute per-axis variance from the particle spread
-        x_var     = float(np.average((self.particles[:, 0] - x_mean) ** 2, weights=self.weights))
-        y_var     = float(np.average((self.particles[:, 1] - y_mean) ** 2, weights=self.weights))
+        x_var = float(np.average((self.particles[:, 0] - x_mean) ** 2, weights=self.weights))
+        y_var = float(np.average((self.particles[:, 1] - y_mean) ** 2, weights=self.weights))
         theta_var = float(np.average(
-            (np.arctan2(
+            np.arctan2(
                 np.sin(self.particles[:, 2] - theta_mean),
                 np.cos(self.particles[:, 2] - theta_mean)
-            )) ** 2,
+            ) ** 2,
             weights=self.weights
         ))
 
@@ -301,15 +300,14 @@ class ParticleFilterNode(Node):
         msg.pose.pose.position.y = float(y_mean)
         msg.pose.pose.orientation.z = math.sin(theta_mean / 2.0)
         msg.pose.pose.orientation.w = math.cos(theta_mean / 2.0)
-        # Row-major 6x6 covariance [x, y, z, roll, pitch, yaw]
-        msg.pose.covariance[0]  = x_var      # x-x
-        msg.pose.covariance[7]  = y_var      # y-y
-        msg.pose.covariance[35] = theta_var  # yaw-yaw
+        msg.pose.covariance[0]  = x_var
+        msg.pose.covariance[7]  = y_var
+        msg.pose.covariance[35] = theta_var
         self.pose_pub.publish(msg)
         self._broadcast_map_to_odom(x_mean, y_mean, theta_mean, msg.header.stamp)
 
     def _broadcast_map_to_odom(self, map_x, map_y, map_yaw, stamp):
-        """Publish the dynamic map->odom TF derived from the particle filter estimate."""
+        """Broadcast the dynamic map->odom TF derived from the particle filter estimate."""
         if self.current_odom_pose is None:
             return
 

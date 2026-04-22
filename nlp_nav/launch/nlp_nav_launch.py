@@ -15,20 +15,20 @@ def generate_launch_description():
     nav2_bringup_pkg      = get_package_share_directory('nav2_bringup')
     pf_pkg                = get_package_share_directory('nlp_nav')
 
-    map_yaml       = os.path.join(pf_pkg, 'maps', 'map.yaml')
-    nav2_params    = os.path.join(pf_pkg, 'config', 'nav2_params.yaml')
-    nav2_rviz_cfg  = os.path.join(nav2_bringup_pkg, 'rviz', 'nav2_default_view.rviz')
+    map_yaml      = os.path.join(pf_pkg, 'maps', 'map.yaml')
+    nav2_params   = os.path.join(pf_pkg, 'config', 'nav2_params.yaml')
+    nav2_rviz_cfg = os.path.join(nav2_bringup_pkg, 'rviz', 'nav2_default_view.rviz')
 
     use_sim_time = LaunchConfiguration('use_sim_time', default='true')
 
-    # ── Gazebo + TurtleBot3 ────────────────────────────────────────────────
+    # Gazebo + TurtleBot3
     gazebo = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(turtlebot3_gazebo_pkg, 'launch', 'turtlebot3_house.launch.py')
         )
     )
 
-    # ── Static map (map_server + lifecycle manager) ────────────────────────
+    # Static map
     map_server = Node(
         package='nav2_map_server',
         executable='map_server',
@@ -49,9 +49,7 @@ def generate_launch_description():
         ],
     )
 
-    # ── Particle filter localiser ──────────────────────────────────────────
-    # Publishes /amcl_pose (PoseWithCovarianceStamped) and
-    # broadcasts the dynamic map→odom TF that Nav2 requires.
+    # Particle filter localiser — broadcasts dynamic map->odom TF and publishes /amcl_pose
     particle_filter = Node(
         package='nlp_nav',
         executable='particleFilter.py',
@@ -60,8 +58,7 @@ def generate_launch_description():
         parameters=[{'use_sim_time': use_sim_time}],
     )
 
-    # ── Nav2 navigation stack (controller, planner, BT, behaviours) ────────
-    # Does NOT include map_server or AMCL — we supply both above.
+    # Nav2 stack (controller_server with DWA, planner_server, bt_navigator, behaviours)
     nav2_navigation = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(nav2_bringup_pkg, 'launch', 'navigation_launch.py')
@@ -72,7 +69,6 @@ def generate_launch_description():
         }.items(),
     )
 
-    # ── RViz ──────────────────────────────────────────────────────────────
     rviz = Node(
         package='rviz2',
         executable='rviz2',

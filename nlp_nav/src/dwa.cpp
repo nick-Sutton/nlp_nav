@@ -142,10 +142,10 @@ namespace nlp_nav {
         for (const auto & pt : traj.points) {
             unsigned int mx, my;
             if (!costmap_->worldToMap(pt.x, pt.y, mx, my)) {
-            return false;  // outside map bounds — treat as obstacle
+                return false;  // outside map bounds — treat as obstacle
             }
             if (costmap_->getCost(mx, my) >= nav2_costmap_2d::LETHAL_OBSTACLE) {
-            return false;
+                return false;
             }
         }
         return true;
