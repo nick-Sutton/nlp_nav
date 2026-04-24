@@ -4,7 +4,7 @@ from rclpy.node import Node
 from nav_msgs.msg import Odometry, Path
 from nav2_msgs.msg import Costmap
 from sensor_msgs.msg import LaserScan
-from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped, Pose, PoseArray, TransformStamped
+from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped, PoseArray, TransformStamped
 import nav2_simple_commander
 from nav2_simple_commander.robot_navigator import BasicNavigator
 import heapq
@@ -19,40 +19,40 @@ class LatestPoseSubscriber(Node):
         super().__init__('latest_pose_subscriber')
         self.start_pose = None
         self.subscription = self.create_subscription(
-            Pose,                # Message type
+            PoseStamped,         # Message type
             "/pose",             # Topic name
             self.save_start_pose,
             1                    # QoS queue size (1 = only latest kept)
         )
     
-    def save_start_pose(self, pose:Pose):
+    def save_start_pose(self, pose: PoseStamped):
         """Saves it
 
         Args:
-            pose (Pose): the position to save
+            pose (PoseStamped): the position to save
         """
         self.start_pose = pose
         
 
 class GlobalPlanner(Node):
     
-    def __init__(self, start_pose: Pose):
+    def __init__(self, start_pose: PoseStamped):
         """Runs A* global planner. 
            Gets the goal position from the `/goal_pose` topic
 
         Args:
-            start_pose (Pose): the starting position of the robot
+            start_pose (PoseStamped): the starting position of the robot
         """
         super().__init__('global_planner')
         self.start_pose = start_pose
         self.navigator = BasicNavigator()
-        self.create_subscription(Pose, "/goal_pose", self.callback, 10)
+        self.create_subscription(PoseStamped, "/goal_pose", self.callback, 10)
         
-    def __pose_to_coord(self, pose:Pose, cost_map:Costmap) -> Tuple[int, int]:
+    def __pose_to_coord(self, pose: PoseStamped, cost_map: Costmap) -> Tuple[int, int]:
         """Convert world Pose to map coordinates
 
         Args:
-            pose (Pose): Position of robot
+            pose (PoseStamped): Position of robot
             cost_map (Costmap): The costmap whose coordinates to convert to
 
         Returns:
@@ -62,16 +62,16 @@ class GlobalPlanner(Node):
         origin_x = cost_map.metadata.origin.position.x
         origin_y = cost_map.metadata.origin.position.y
         
-        mx = int((pose.position.x - origin_x) // resolution) # Integer division because map coordinates are full integers
-        my = int((pose.position.y - origin_y) // resolution)
+        mx = int((pose.pose.position.x - origin_x) // resolution) # Integer division because map coordinates are full integers
+        my = int((pose.pose.position.y - origin_y) // resolution)
         
         if 0 <= mx < cost_map.metadata.size_x and 0 <= my < cost_map.metadata.size_y:
             return mx, my
         else:
-            self.get_logger().error(f"Pose ({pose.position.x}, {pose.position.y}) is outside costmap bounds")
+            self.get_logger().error(f"Pose ({pose.pose.position.x}, {pose.pose.position.y}) is outside costmap bounds")
             return (-1, -1) # Invalid
         
-    def __coord_to_pose(self, coord:Tuple[int, int], cost_map:Costmap) -> Pose:
+    def __coord_to_pose(self, coord: Tuple[int, int], cost_map: Costmap) -> PoseStamped:
         """Convert map coordinates to world Pose
 
         Args:
@@ -80,7 +80,7 @@ class GlobalPlanner(Node):
             cost_map (Costmap): The costmap whose coordinates to convert from
 
         Returns:
-            Pose: The world pose corresponding to the given map coordinates
+            PoseStamped: The world pose corresponding to the given map coordinates
         """
         resolution = cost_map.metadata.resolution
         origin_x = cost_map.metadata.origin.position.x
@@ -88,13 +88,13 @@ class GlobalPlanner(Node):
         
         mx, my = coord
         
-        pose = Pose()
-        pose.position.x = mx * resolution + origin_x + resolution / 2.0 # scale to resolution, offset by origin, center inside cell
-        pose.position.y = my * resolution + origin_y + resolution / 2.0 # " "
+        pose = PoseStamped()
+        pose.pose.position.x = mx * resolution + origin_x + resolution / 2.0 # scale to resolution, offset by origin, center inside cell
+        pose.pose.position.y = my * resolution + origin_y + resolution / 2.0 # " "
         
         return pose
     
-    def __get_neighbors(self, pose:Pose, cost_map:Costmap) -> List[Tuple[int, int]]:
+    def __get_neighbors(self, pose: PoseStamped, cost_map: Costmap) -> List[Tuple[int, int]]:
         """Get valid neighboring map coordinates (8-connected)
 
         Args:
@@ -129,32 +129,41 @@ class GlobalPlanner(Node):
         x2, y2 = next
         return ((x1 - x2) ** 2 + (y1 - y2) ** 2) ** 0.5
     
-    def __build_path(self, start:Pose, goal:Pose, back_track:dict) -> Path:
+    def __build_path(self, start: PoseStamped, goal: PoseStamped, back_track: dict, cost_map:Costmap) -> Path:
         """Builds a path from the back_track dictionary
 
         Args:
             back_track (dict): Dictionary mapping each map coordinate to its previous coordinate
+            cost_map (Costmap): The costmap used to convert coordinates to poses
 
         Returns:
             Path: The path constructed from the back_track dictionary
         """
         path = Path()
-        path.poses.append(goal)
+        path.poses = [goal]
+        
+        current = back_track[goal]
+        
+        while current is not None:
+            path.poses.append(self.__coord_to_pose(current, cost_map))
+            current = back_track[current]
+            
+        path.poses.reverse() # Reverse to get path from start to goal
+
+        return path
         
     
-    def __a_star(self, start:Pose, goal:Pose, path:Path, cost_map:Costmap):
+    def __a_star(self, start: PoseStamped, goal: PoseStamped, cost_map: Costmap):
         """Performs A* planning
 
         Args:
-            start (Pose): _description_
-            goal (Pose): _description_
-            current (Pose): _description_
-            path (Path): _description_
-            cost_map (Costmap): _description_
+            start (PoseStamped): The starting pose
+            goal (PoseStamped): The goal pose
+            cost_map (Costmap): The costmap to use for planning
         """
         # Initialize our priority queue of all possible positions & cost values
         entry_num: int = 0 # Order of entry into prio queue
-        prio_queue: List[Tuple[float, int, Pose]] = [] # (priority (cost), entry number, Position)
+        prio_queue: List[Tuple[float, int, PoseStamped]] = [] # (priority (cost), entry number, Position)
         heapq.heappush(prio_queue, (0.0, entry_num, start))
         
         back_track = dict() # Key is a map coordinate, value is the coordinate used to get there
@@ -165,7 +174,7 @@ class GlobalPlanner(Node):
         
         while not len(prio_queue) == 0:
             # Set the current position to the last element
-            _, _, current = prio_queue[0]
+            _, _, current = heapq.heappop(prio_queue)
             # If we're there, stop
             if current == goal:
                 break
@@ -174,7 +183,7 @@ class GlobalPlanner(Node):
             for next in self.__get_neighbors(current, cost_map):
                 new_cost = cost_so_far[current] + 1
                 if self.__coord_to_pose(next, cost_map) == goal: # If a neighbor is the goal, stop & move on
-                    back_track[goal] = current
+                    back_track[goal] = self.__pose_to_coord(current, cost_map)
                     break
                     
                 if next not in cost_so_far or new_cost < cost_so_far[next]:
@@ -182,39 +191,31 @@ class GlobalPlanner(Node):
                     prio = new_cost + self.__heuristic(self.__pose_to_coord(goal, cost_map), next)
                     entry_num += 1
                     heapq.heappush(prio_queue, (prio, entry_num, self.__coord_to_pose(next, cost_map)))
-                    back_track[next] = self.__coord_to_pose(next, cost_map)
-            
-            
-            
-            
+                    back_track[next] = next
+                    
+        return self.__build_path(start, goal, back_track, cost_map)
             
         
-        
-    def callback(self, goal:Pose) -> None:
+    def callback(self, goal: PoseStamped) -> None:
         """Starts A* planning
 
         Args:
-            goal (Pose): _description_
+            goal (PoseStamped): The goal pose
         """
         cost_map = self.navigator.getGlobalCostmap()
-        goal_x, goal_y, = goal.position.x, goal.position.y
+        goal_x, goal_y, = goal.pose.position.x, goal.pose.position.y
 
-        current_x = self.start_pose.position.x
-        current_y = self.start_pose.position.y
+        current_x = self.start_pose.pose.position.x
+        current_y = self.start_pose.pose.position.y
         self.get_logger().info(f"Start pose: {current_x}, {current_y}")
         self.get_logger().info(f"Goal pose: {goal_x}, {goal_y}")
-        
-        path = Path()
 
-        self.__a_star(self.start_pose, goal,  path, cost_map)
+        path = self.__a_star(self.start_pose, goal, cost_map)
         
         self.navigator.followPath(path)
         
         
-        
-        
-    
-    
+          
 
 def main():
     rclpy.init()
