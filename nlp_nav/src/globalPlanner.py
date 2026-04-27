@@ -36,7 +36,7 @@ class LatestPoseSubscriber(Node):
 
 class GlobalPlanner(Node):
     
-    def __init__(self, start_pose: PoseStamped):
+    def __init__(self, start_pose_node:LatestPoseSubscriber):
         """Runs A* global planner. 
            Gets the goal position from the `/goal_pose` topic
 
@@ -44,9 +44,9 @@ class GlobalPlanner(Node):
             start_pose (PoseStamped): the starting position of the robot
         """
         super().__init__('global_planner')
-        self.start_pose = start_pose
         self.navigator = BasicNavigator()
         self.create_subscription(PoseStamped, "/goal_pose", self.callback, 10)
+        self.start_pose_node = start_pose_node
         
     def __pose_to_coord(self, pose: PoseStamped, cost_map: Costmap) -> Tuple[int, int]:
         """Convert world Pose to map coordinates
@@ -202,6 +202,7 @@ class GlobalPlanner(Node):
         Args:
             goal (PoseStamped): The goal pose
         """
+        self.start_pose:PoseStamped = self.start_pose_node.start_pose
         cost_map = self.navigator.getGlobalCostmap()
         goal_x, goal_y, = goal.pose.position.x, goal.pose.position.y
 
@@ -222,11 +223,8 @@ def main():
     latest_pose = LatestPoseSubscriber()
     planner = None
     try:
-        while latest_pose.start_pose is None:
-            rclpy.spin_once(latest_pose, timeout_sec=0.1)
-
-        planner = GlobalPlanner(latest_pose.start_pose)
-        latest_pose.destroy_node()
+        rclpy.spin(latest_pose)
+        planner = GlobalPlanner(latest_pose)
         rclpy.spin(planner)
     except KeyboardInterrupt:
         # ctrl+c 
