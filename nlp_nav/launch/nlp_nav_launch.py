@@ -12,23 +12,32 @@ from launch.substitutions import LaunchConfiguration
 
 def generate_launch_description():
     turtlebot3_gazebo_pkg = get_package_share_directory('turtlebot3_gazebo')
-    nav2_bringup_pkg      = get_package_share_directory('nav2_bringup')
-    pf_pkg                = get_package_share_directory('nlp_nav')
+    nav2_bringup_pkg = get_package_share_directory('nav2_bringup')
+    pf_pkg = get_package_share_directory('nlp_nav')
 
-    map_yaml      = os.path.join(pf_pkg, 'maps', 'map.yaml')
-    nav2_params   = os.path.join(pf_pkg, 'config', 'nav2_params.yaml')
-    nav2_rviz_cfg = os.path.join(nav2_bringup_pkg, 'rviz', 'nav2_default_view.rviz')
+    nav2_rviz_config = os.path.join(nav2_bringup_pkg, 'rviz', 'nav2_default_view.rviz')
+    map_yaml = os.path.join(pf_pkg, 'maps', 'map.yaml')
+    nav2_params = os.path.join(pf_pkg, 'config', 'nav2_params.yaml')
 
     use_sim_time = LaunchConfiguration('use_sim_time', default='true')
 
     # Gazebo + TurtleBot3
-    gazebo = IncludeLaunchDescription(
+    # /scan, /cmd_vel, /clock, /odom, /tf are bridged by turtlebot3_house.launch.py
+    pre_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(turtlebot3_gazebo_pkg, 'launch', 'turtlebot3_house.launch.py')
         )
     )
 
-    # Static map
+    rviz = Node(
+        package='rviz2',
+        executable='rviz2',
+        name='rviz2',
+        arguments=['-d', nav2_rviz_config],
+        output='screen',
+    )
+
+    # Static map with its own lifecycle manager
     map_server = Node(
         package='nav2_map_server',
         executable='map_server',
@@ -49,7 +58,7 @@ def generate_launch_description():
         ],
     )
 
-    # Particle filter localiser — broadcasts dynamic map->odom TF and publishes /amcl_pose
+    # Particle filter localiser — broadcasts dynamic map→odom TF
     particle_filter = Node(
         package='nlp_nav',
         executable='particleFilter.py',
@@ -58,30 +67,46 @@ def generate_launch_description():
         parameters=[{'use_sim_time': use_sim_time}],
     )
 
-    # Nav2 stack (controller_server with DWA, planner_server, bt_navigator, behaviours)
-    nav2_navigation = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(nav2_bringup_pkg, 'launch', 'navigation_launch.py')
-        ),
-        launch_arguments={
-            'use_sim_time': use_sim_time,
-            'params_file':  nav2_params,
-        }.items(),
-    )
-
-    rviz = Node(
-        package='rviz2',
-        executable='rviz2',
-        name='rviz2',
-        arguments=['-d', nav2_rviz_cfg],
+    # Nav2 controller (brings local costmap).
+    # Publishes Twist to /cmd_vel_raw; the bridge wraps it as TwistStamped on
+    # /cmd_vel to match ros_gz_bridge's subscriber type.
+    controller_server = Node(
+        package='nav2_controller',
+        executable='controller_server',
+        name='controller_server',
         output='screen',
+        parameters=[nav2_params, {'use_sim_time': use_sim_time}],
+        remappings=[('cmd_vel', 'cmd_vel_raw')],
     )
 
-    return LaunchDescription([
-        gazebo,
-        map_server,
-        map_lifecycle,
-        particle_filter,
-        nav2_navigation,
-        rviz,
-    ])
+    cmd_vel_bridge = Node(
+        package='nlp_nav',
+        executable='cmd_vel_bridge.py',
+        name='cmd_vel_bridge',
+        output='screen',
+        parameters=[{'use_sim_time': use_sim_time}],
+    )
+
+    nav2_lifecycle = Node(
+        package='nav2_lifecycle_manager',
+        executable='lifecycle_manager',
+        name='lifecycle_manager_navigation',
+        output='screen',
+        parameters=[
+            {'use_sim_time': use_sim_time},
+            {'autostart': True},
+            {'node_names': ['controller_server']},
+        ],
+    )
+
+    ld = LaunchDescription()
+    ld.add_action(pre_launch)
+    ld.add_action(map_server)
+    ld.add_action(map_lifecycle)
+    ld.add_action(particle_filter)
+    ld.add_action(controller_server)
+    ld.add_action(cmd_vel_bridge)
+    ld.add_action(nav2_lifecycle)
+    ld.add_action(rviz)
+
+    return ld

@@ -3,7 +3,7 @@ import rclpy
 from rclpy.node import Node
 from nav_msgs.msg import Odometry, OccupancyGrid
 from sensor_msgs.msg import LaserScan
-from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped, Pose, PoseArray, TransformStamped
+from geometry_msgs.msg import PoseStamped, Pose, PoseArray, PoseWithCovarianceStamped, TransformStamped
 import tf2_ros
 import numpy as np
 import math
@@ -12,7 +12,7 @@ import yaml
 import os
 from types import SimpleNamespace
 from motionModel import sample_motion_odometry, compute_odometry_deltas, quaternion_to_yaw
-from sensorModel import sensor_model, compute_likelihood_field
+from sensorModel import compute_likelihood_field
 
 class ParticleFilterNode(Node):
     def __init__(self, num_particles=1000):
@@ -28,10 +28,21 @@ class ParticleFilterNode(Node):
 
         self.create_subscription(Odometry, '/odom', self.odom_callback, 10)
         self.create_subscription(LaserScan, '/scan', self.scan_callback, 10)
+        self.create_subscription(
+            PoseWithCovarianceStamped, '/initialpose', self.initialpose_callback, 10)
 
-        self.pose_pub = self.create_publisher(PoseWithCovarianceStamped, '/amcl_pose', 10)
+        self.pose_pub = self.create_publisher(PoseStamped, '/estimated_pose', 10)
         self.particle_pub = self.create_publisher(PoseArray, '/pf_particle_cloud', 10)
         self.tf_broadcaster = tf2_ros.TransformBroadcaster(self)
+
+        # Latest localization estimate (map frame) — updated by scan callback
+        self.estimated_x = 0.0
+        self.estimated_y = 0.0
+        self.estimated_theta = 0.0
+
+        # Monotonicity guard: last TF stamp in nanoseconds
+        self._last_tf_stamp_ns = 0
+
         self.get_logger().info("Particle Filter node initialized")
 
         self.map_init()
@@ -96,16 +107,14 @@ class ParticleFilterNode(Node):
         # ============================================================
         # TODO [D2]: Initialize self.particles (shape: num_particles x 3)
         self.particles = np.zeros((self.num_particles, 3))
-        
+
         # Step 1: Find free cells where data > 250
-        #   free_indices = np.argwhere(data > 250)
-        #   This gives an array of (row, col) = (y, x) indices
         free_indices = np.argwhere(data > 250)
-        
+
         # Step 2: Randomly choose num_particles cells from free_indices
         chosen = free_indices[np.random.choice(len(free_indices), size=self.num_particles, replace=True)]
 
-        # Step 3: Convert pixel coordinates to world coordinates:
+        # Step 3: Convert pixel coordinates to world coordinates
         pixel_y = chosen[:, 0]
         pixel_x = chosen[:, 1]
         world_x = origin_x + pixel_x * res
@@ -115,13 +124,49 @@ class ParticleFilterNode(Node):
         self.particles[:, 0] = world_x
         self.particles[:, 1] = world_y
         self.particles[:, 2] = theta
-        
+
         # Step 4: Set self.weights to uniform (1/N for each particle)
         self.weights = np.ones(self.num_particles) / self.num_particles
-
-
         # ============================================================
 
+        self.publish_particle_cloud()
+
+    def _broadcast_map_to_odom(self, map_x, map_y, map_yaw, stamp):
+        """Compute and broadcast the map→odom transform."""
+        ox, oy, oth = self.current_odom_pose
+        dth = map_yaw - oth
+        tx = map_x - (ox * math.cos(dth) - oy * math.sin(dth))
+        ty = map_y - (ox * math.sin(dth) + oy * math.cos(dth))
+
+        t = TransformStamped()
+        t.header.stamp = stamp
+        t.header.frame_id = 'map'
+        t.child_frame_id = 'odom'
+        t.transform.translation.x = tx
+        t.transform.translation.y = ty
+        t.transform.translation.z = 0.0
+        t.transform.rotation.z = math.sin(dth / 2.0)
+        t.transform.rotation.w = math.cos(dth / 2.0)
+        self.tf_broadcaster.sendTransform(t)
+
+    def initialpose_callback(self, msg):
+        """Reinitialize particles around the pose set via RViz '2D Pose Estimate'."""
+        x = msg.pose.pose.position.x
+        y = msg.pose.pose.position.y
+        q = msg.pose.pose.orientation
+        theta = math.atan2(2.0 * (q.w * q.z + q.x * q.y),
+                           1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+
+        std_xy = 0.5
+        std_th = 0.2
+
+        self.particles[:, 0] = np.random.normal(x, std_xy, self.num_particles)
+        self.particles[:, 1] = np.random.normal(y, std_xy, self.num_particles)
+        self.particles[:, 2] = np.random.normal(theta, std_th, self.num_particles)
+        self.weights = np.ones(self.num_particles) / self.num_particles
+
+        self.get_logger().info(
+            f"Particles reset to ({x:.2f}, {y:.2f}, {math.degrees(theta):.1f}deg)")
         self.publish_particle_cloud()
 
     def odom_callback(self, msg):
@@ -173,48 +218,33 @@ class ParticleFilterNode(Node):
         if self.likelihood_field is None or self.particles is None:
             return
 
-        # === Prediction step (motion model) ===
+        # === Prediction step (motion model) — vectorised ===
         if self.u is not None and self.have_u:
-            rot1, trans, rot2 = self.u
-            new_particles = []
-            for p in self.particles:
-                new_p = self.apply_motion_delta(p, self.u, self.alphas)
-                new_particles.append(new_p)
-            self.particles = np.array(new_particles)
+            self._batch_motion_update(self.u, self.alphas)
             self.prev_odom_pose = self.current_odom_pose
             self.u = None
             self.have_u = False
 
         # ============================================================
         # TODO [D2]: Correction step - compute particle weights
-        self.weights = np.ones(self.num_particles) / self.num_particles
-        
-        # For each particle, call sensor_model() to get a log-likelihood:
-        log_weights = []
-        for particle in self.particles:
-            ll = sensor_model(particle, msg, self.likelihood_field, self.map_info)
-            log_weights.append(ll)
-        
-        # Then convert log-likelihoods to weights:
-        #   1. Find max log-likelihood: max_ll = np.max(log_weights)
-        #   2. Subtract max for numerical stability: weights = exp(log_weights - max_ll)
-        #   3. Add tiny constant to avoid zeros: weights += 1e-300
-        #   4. Normalize so they sum to 1: weights /= sum(weights)
-        log_weights = np.array(log_weights)
+
+        # Vectorised sensor model — evaluates all particles at once.
+        log_weights = self._batch_sensor_model(msg)
         max_ll = np.max(log_weights)
         weights = np.exp(log_weights - max_ll)
         weights += 1e-300
-        weights /= sum(weights)
-        
-        # Store result in self.weights
+        w_sum = weights.sum()
+        if w_sum > 0 and np.isfinite(w_sum):
+            weights /= w_sum
+        else:
+            weights = np.ones(self.num_particles) / self.num_particles
+
         self.weights = weights
         # ============================================================
 
         # ============================================================
         # TODO [D2]: Resampling step
-        #
-        # Compute the effective particle count:
-        N_eff = 1.0 / sum(weights**2)
+        N_eff = 1.0 / np.sum(weights**2)
         if N_eff < self.num_particles * 0.5:
             self.resample_particles()
         # ============================================================
@@ -222,112 +252,113 @@ class ParticleFilterNode(Node):
         self.publish_particle_cloud()
         self.publish_estimated_pose()
 
+        # Broadcast map→odom using the scan's own timestamp (monotonically
+        # increasing from Gazebo, so TF_OLD_DATA cannot occur).
+        if self.current_odom_pose is not None:
+            scan_ns = msg.header.stamp.sec * 10**9 + msg.header.stamp.nanosec
+            if scan_ns > self._last_tf_stamp_ns:
+                self._last_tf_stamp_ns = scan_ns
+                self._broadcast_map_to_odom(
+                    self.estimated_x, self.estimated_y, self.estimated_theta,
+                    msg.header.stamp)
+
     def apply_motion_delta(self, pose, u, alphas):
-        """
-        Apply a noisy motion delta to a single particle.
-        Same algorithm as sample_motion_odometry, but takes (rot1, trans, rot2)
-        directly instead of raw odometry messages.
-        """
         x, y, theta = pose
         rot1, trans, rot2 = u
         a1, a2, a3, a4 = alphas
 
-        # ============================================================
-        # TODO [D2]: Apply noisy motion to this particle
-        
-        # Same math as sample_motion_odometry in motionModel.py:
-        # 1. Compute noise std devs from alphas and deltas
         rot1_noise_std = math.sqrt(a1 * rot1**2 + a2 * trans**2)
         trans_noise_std = math.sqrt(a3 * trans**2 + a4 * (rot1**2 + rot2**2))
         rot2_noise_std = math.sqrt(a1 * rot2**2 + a2 * trans**2)
 
-        # 2. Add Gaussian noise to rot1, trans, rot2
         rot1_hat  = rot1  - np.random.normal(0, rot1_noise_std)
         trans_hat = trans - np.random.normal(0, trans_noise_std)
         rot2_hat  = rot2  - np.random.normal(0, rot2_noise_std)
 
-        # 3. Compute new (x, y, theta) from noisy deltas
-        
         x_new     = x + trans_hat * math.cos(theta + rot1_hat)
         y_new     = y + trans_hat * math.sin(theta + rot1_hat)
         theta_new = theta + rot1_hat + rot2_hat
         theta_new = (theta_new + math.pi) % (2 * math.pi) - math.pi
-        # ============================================================
 
         return (x_new, y_new, theta_new)
 
+    def _batch_motion_update(self, u, alphas):
+        rot1, trans, rot2 = u
+        a1, a2, a3, a4 = alphas
+        N = self.num_particles
+        std_rot1  = math.sqrt(a1 * rot1**2 + a2 * trans**2)
+        std_trans = math.sqrt(a3 * trans**2 + a4 * (rot1**2 + rot2**2))
+        std_rot2  = math.sqrt(a1 * rot2**2 + a2 * trans**2)
+        rot1_hat  = rot1  - np.random.normal(0, std_rot1,  N)
+        trans_hat = trans - np.random.normal(0, std_trans, N)
+        rot2_hat  = rot2  - np.random.normal(0, std_rot2,  N)
+        x  = self.particles[:, 0]
+        y  = self.particles[:, 1]
+        th = self.particles[:, 2]
+        self.particles[:, 0] = x  + trans_hat * np.cos(th + rot1_hat)
+        self.particles[:, 1] = y  + trans_hat * np.sin(th + rot1_hat)
+        th_new = th + rot1_hat + rot2_hat
+        self.particles[:, 2] = np.arctan2(np.sin(th_new), np.cos(th_new))
+
+    def _batch_sensor_model(self, scan, z_hit=0.85, z_rand=0.15, sigma_hit=0.30, step=8):
+        res = self.map_info.resolution
+        origin_x = self.map_info.origin.position.x
+        origin_y = self.map_info.origin.position.y
+        H, W = self.likelihood_field.shape
+        range_width = max(1e-6, scan.range_max - scan.range_min)
+        ranges = np.array(scan.ranges)
+        all_idx = np.arange(len(ranges))[::step]
+        valid = np.isfinite(ranges[all_idx]) & (ranges[all_idx] < scan.range_max)
+        idx = all_idx[valid]
+        if len(idx) == 0:
+            return np.zeros(self.num_particles)
+        r = ranges[idx]
+        ang = scan.angle_min + idx * scan.angle_increment
+        x  = self.particles[:, 0, None]
+        y  = self.particles[:, 1, None]
+        th = self.particles[:, 2, None]
+        xe = x + r * np.cos(th + ang)
+        ye = y + r * np.sin(th + ang)
+        mx = ((xe - origin_x) / res).astype(int)
+        my = ((ye - origin_y) / res).astype(int)
+        ok = (mx >= 0) & (mx < W) & (my >= 0) & (my < H)
+        mxs = np.clip(mx, 0, W - 1)
+        mys = np.clip(my, 0, H - 1)
+        dist = self.likelihood_field[mys, mxs]
+        p_hit = np.exp(-(dist**2) / (2 * sigma_hit**2))
+        p = np.where(ok, z_hit * p_hit + z_rand / range_width, 1e-4)
+        return np.log(np.maximum(p, 1e-12)).sum(axis=1)
+
     def resample_particles(self):
-        """
-        Resample particles using multinomial resampling (importance sampling).
-        Particles with higher weights are more likely to be selected.
-        """
+        """Multinomial resampling."""
         # ============================================================
         # TODO [D2]: Implement multinomial resampling
-        #
-        # Use np.random.choice to draw num_particles indices WITH replacement,
-        # where the probability of each index equals its weight:
-        #
         indices = np.random.choice(self.num_particles, size=self.num_particles, p=self.weights)
         self.particles = self.particles[indices]
         self.weights = np.ones(self.num_particles) / self.num_particles
-        
-        
         # ============================================================
 
     def publish_estimated_pose(self):
         """Publish the weighted mean of all particles as the estimated robot pose."""
         x_mean = np.average(self.particles[:, 0], weights=self.weights)
         y_mean = np.average(self.particles[:, 1], weights=self.weights)
-        # Use circular mean for angle (handles wraparound correctly)
         sin_sum = np.average(np.sin(self.particles[:, 2]), weights=self.weights)
         cos_sum = np.average(np.cos(self.particles[:, 2]), weights=self.weights)
         theta_mean = math.atan2(sin_sum, cos_sum)
 
-        x_var = float(np.average((self.particles[:, 0] - x_mean) ** 2, weights=self.weights))
-        y_var = float(np.average((self.particles[:, 1] - y_mean) ** 2, weights=self.weights))
-        theta_var = float(np.average(
-            np.arctan2(
-                np.sin(self.particles[:, 2] - theta_mean),
-                np.cos(self.particles[:, 2] - theta_mean)
-            ) ** 2,
-            weights=self.weights
-        ))
+        # Store for TF timer
+        self.estimated_x = float(x_mean)
+        self.estimated_y = float(y_mean)
+        self.estimated_theta = theta_mean
 
-        msg = PoseWithCovarianceStamped()
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = "map"
-        msg.pose.pose.position.x = float(x_mean)
-        msg.pose.pose.position.y = float(y_mean)
-        msg.pose.pose.orientation.z = math.sin(theta_mean / 2.0)
-        msg.pose.pose.orientation.w = math.cos(theta_mean / 2.0)
-        msg.pose.covariance[0]  = x_var
-        msg.pose.covariance[7]  = y_var
-        msg.pose.covariance[35] = theta_var
-        self.pose_pub.publish(msg)
-        self._broadcast_map_to_odom(x_mean, y_mean, theta_mean, msg.header.stamp)
-
-    def _broadcast_map_to_odom(self, map_x, map_y, map_yaw, stamp):
-        """Broadcast the dynamic map->odom TF derived from the particle filter estimate."""
-        if self.current_odom_pose is None:
-            return
-
-        ox, oy, oth = self.current_odom_pose
-
-        # T_map_odom = T_map_base * inv(T_odom_base)
-        dth = map_yaw - oth
-        tx = map_x - (ox * math.cos(dth) - oy * math.sin(dth))
-        ty = map_y - (ox * math.sin(dth) + oy * math.cos(dth))
-
-        t = TransformStamped()
-        t.header.stamp = stamp
-        t.header.frame_id = 'map'
-        t.child_frame_id = 'odom'
-        t.transform.translation.x = tx
-        t.transform.translation.y = ty
-        t.transform.translation.z = 0.0
-        t.transform.rotation.z = math.sin(dth / 2.0)
-        t.transform.rotation.w = math.cos(dth / 2.0)
-        self.tf_broadcaster.sendTransform(t)
+        pose_msg = PoseStamped()
+        pose_msg.header.stamp = self.get_clock().now().to_msg()
+        pose_msg.header.frame_id = "map"
+        pose_msg.pose.position.x = self.estimated_x
+        pose_msg.pose.position.y = self.estimated_y
+        pose_msg.pose.orientation.z = math.sin(theta_mean / 2.0)
+        pose_msg.pose.orientation.w = math.cos(theta_mean / 2.0)
+        self.pose_pub.publish(pose_msg)
 
     def publish_particle_cloud(self):
         """Publish all particles as a PoseArray for visualization in RViz."""

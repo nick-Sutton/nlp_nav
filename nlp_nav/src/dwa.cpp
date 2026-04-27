@@ -62,6 +62,7 @@ namespace nlp_nav {
             const auto & last = path.poses.back();
             goal_.x = last.pose.position.x;
             goal_.y = last.pose.position.y;
+            goal_frame_id_ = path.header.frame_id;
             has_plan_ = true;
         }
     }
@@ -109,9 +110,37 @@ namespace nlp_nav {
             return cmd;
         }
 
-        Trajectory best = selectBest(candidates, pose);
+        // Transform the stored goal from its original frame (map) into the
+        // frame the pose is expressed in (odom) so heading scoring is consistent.
+        GoalPoint goal_local = goal_;
+        if (!goal_frame_id_.empty() && goal_frame_id_ != pose.header.frame_id) {
+            try {
+                auto tf_stamped = tf_->lookupTransform(
+                    pose.header.frame_id, goal_frame_id_, tf2::TimePointZero);
+                geometry_msgs::msg::PoseStamped goal_msg, goal_transformed;
+                goal_msg.header.frame_id = goal_frame_id_;
+                goal_msg.pose.position.x = goal_.x;
+                goal_msg.pose.position.y = goal_.y;
+                goal_msg.pose.orientation.w = 1.0;
+                tf2::doTransform(goal_msg, goal_transformed, tf_stamped);
+                goal_local.x = goal_transformed.pose.position.x;
+                goal_local.y = goal_transformed.pose.position.y;
+            } catch (const tf2::TransformException & ex) {
+                auto node = node_.lock();
+                RCLCPP_WARN(node->get_logger(), "Goal transform failed: %s", ex.what());
+                return cmd;
+            }
+        }
+
+        Trajectory best = selectBest(candidates, goal_local);
         cmd.twist.linear.x  = best.vx;
         cmd.twist.angular.z = best.vth;
+
+        auto node = node_.lock();
+        RCLCPP_INFO_THROTTLE(node->get_logger(), *node->get_clock(), 1000,
+            "DWA: %zu candidates, sending vx=%.3f vth=%.3f",
+            candidates.size(), best.vx, best.vth);
+
         return cmd;
     }
 
@@ -144,7 +173,10 @@ namespace nlp_nav {
             if (!costmap_->worldToMap(pt.x, pt.y, mx, my)) {
                 return false;  // outside map bounds — treat as obstacle
             }
-            if (costmap_->getCost(mx, my) >= nav2_costmap_2d::LETHAL_OBSTACLE) {
+            uint8_t cost = costmap_->getCost(mx, my);
+            // NO_INFORMATION (255) is treated as free — only reject known lethal cells
+            if (cost != nav2_costmap_2d::NO_INFORMATION &&
+                cost >= nav2_costmap_2d::LETHAL_OBSTACLE) {
                 return false;
             }
         }
@@ -170,7 +202,7 @@ namespace nlp_nav {
 
     Trajectory DWAController::selectBest(
         const std::vector<Trajectory> & candidates,
-        const geometry_msgs::msg::PoseStamped & /*pose*/)
+        const GoalPoint & goal)
     {
         Trajectory best;
         double best_score = -std::numeric_limits<double>::infinity();
@@ -179,9 +211,12 @@ namespace nlp_nav {
             if (traj.points.empty()) { continue; }
             const auto & end = traj.points.back();
 
-            // Heading: angle difference between trajectory end and goal direction
-            const double goal_angle = std::atan2(goal_.y - end.y, goal_.x - end.x);
-            const double heading    = M_PI - std::abs(end.yaw - goal_angle);
+            // Heading: angle difference between trajectory end and goal direction.
+            // Normalize to [-π, π] to keep the score in [0, π].
+            const double goal_angle = std::atan2(goal.y - end.y, goal.x - end.x);
+            double heading_diff = end.yaw - goal_angle;
+            heading_diff = std::atan2(std::sin(heading_diff), std::cos(heading_diff));
+            const double heading = M_PI - std::abs(heading_diff);
 
             // Clearance: normalised min obstacle distance along trajectory
             const double clearance = minObstacleDist(traj);
