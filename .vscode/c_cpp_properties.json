@@ -1,0 +1,27 @@
+{
+  "configurations": [
+    {
+      "browse": {
+        "databaseFilename": "${workspaceFolder}/.vscode/browse.vc.db",
+        "limitSymbolsToIncludedHeaders": false
+      },
+      "includePath": [
+        "/home/ubuntu/ros_ws/install/nlp_nav/include/**",
+        "/home/ubuntu/turtlebot3_pkgs/install/turtlebot3_fake_node/include/**",
+        "/home/ubuntu/turtlebot3_pkgs/install/turtlebot3_msgs/include/**",
+        "/home/ubuntu/turtlebot3_pkgs/install/turtlebot3_gazebo/include/**",
+        "/home/ubuntu/turtlebot3_pkgs/install/dynamixel_sdk_custom_interfaces/include/**",
+        "/home/ubuntu/turtlebot3_pkgs/install/dynamixel_sdk/include/**",
+        "/opt/ros/jazzy/include/**",
+        "/home/ubuntu/ros_ws/src/nlp_nav/nlp_nav/include/**",
+        "/usr/include/**"
+      ],
+      "name": "ros2",
+      "intelliSenseMode": "gcc-x64",
+      "compilerPath": "/usr/bin/gcc",
+      "cStandard": "gnu11",
+      "cppStandard": "c++17"
+    }
+  ],
+  "version": 4
+}

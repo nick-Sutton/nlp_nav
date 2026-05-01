@@ -1,0 +1,31 @@
+{
+    "ROS2.distro": "jazzy",
+    "python.autoComplete.extraPaths": [
+        "/home/ubuntu/ros_ws/build/P1D2_Nicholas_Sutton",
+        "/home/ubuntu/ros_ws/install/P1D2_Nicholas_Sutton/lib/python3.12/site-packages",
+        "/home/ubuntu/ros_ws/src/install/wall_follower_q_learning/lib/python3.12/site-packages",
+        "/home/ubuntu/ros_ws/src/install/P1D2_Nicholas_Sutton/lib/python3.12/site-packages",
+        "/home/ubuntu/turtlebot3_pkgs/build/turtlebot3_teleop",
+        "/home/ubuntu/turtlebot3_pkgs/install/turtlebot3_teleop/lib/python3.12/site-packages",
+        "/home/ubuntu/turtlebot3_pkgs/build/turtlebot3_example",
+        "/home/ubuntu/turtlebot3_pkgs/install/turtlebot3_example/lib/python3.12/site-packages",
+        "/home/ubuntu/turtlebot3_pkgs/install/turtlebot3_msgs/lib/python3.12/site-packages",
+        "/home/ubuntu/turtlebot3_pkgs/install/dynamixel_sdk_custom_interfaces/lib/python3.12/site-packages",
+        "/home/ubuntu/turtlebot3_pkgs/install/dynamixel_sdk/lib/python3.12/site-packages",
+        "/opt/ros/jazzy/lib/python3.12/site-packages"
+    ],
+    "python.analysis.extraPaths": [
+        "/home/ubuntu/ros_ws/build/P1D2_Nicholas_Sutton",
+        "/home/ubuntu/ros_ws/install/P1D2_Nicholas_Sutton/lib/python3.12/site-packages",
+        "/home/ubuntu/ros_ws/src/install/wall_follower_q_learning/lib/python3.12/site-packages",
+        "/home/ubuntu/ros_ws/src/install/P1D2_Nicholas_Sutton/lib/python3.12/site-packages",
+        "/home/ubuntu/turtlebot3_pkgs/build/turtlebot3_teleop",
+        "/home/ubuntu/turtlebot3_pkgs/install/turtlebot3_teleop/lib/python3.12/site-packages",
+        "/home/ubuntu/turtlebot3_pkgs/build/turtlebot3_example",
+        "/home/ubuntu/turtlebot3_pkgs/install/turtlebot3_example/lib/python3.12/site-packages",
+        "/home/ubuntu/turtlebot3_pkgs/install/turtlebot3_msgs/lib/python3.12/site-packages",
+        "/home/ubuntu/turtlebot3_pkgs/install/dynamixel_sdk_custom_interfaces/lib/python3.12/site-packages",
+        "/home/ubuntu/turtlebot3_pkgs/install/dynamixel_sdk/lib/python3.12/site-packages",
+        "/opt/ros/jazzy/lib/python3.12/site-packages"
+    ]
+}
