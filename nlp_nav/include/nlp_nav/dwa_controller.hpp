@@ -17,6 +17,7 @@
 #include "geometry_msgs/msg/twist_stamped.hpp"
 #include "tf2/utils.h"
 #include "tf2_ros/buffer.h"
+#include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
 #include "pluginlib/class_list_macros.hpp"
 
 namespace nlp_nav {
@@ -54,6 +55,8 @@ namespace nlp_nav {
       void setSpeedLimit(const double & speed_limit, const bool & percentage) override;
 
     private:
+      struct GoalPoint { double x{0.0}; double y{0.0}; };
+
       Trajectory simulateTrajectory(
         const geometry_msgs::msg::PoseStamped & start,
         double vx, double vth);
@@ -62,7 +65,7 @@ namespace nlp_nav {
 
       Trajectory selectBest(
         const std::vector<Trajectory> & candidates,
-        const geometry_msgs::msg::PoseStamped & pose);
+        const GoalPoint & goal);
 
       double minObstacleDist(const Trajectory & traj);
 
@@ -94,7 +97,8 @@ namespace nlp_nav {
       double gamma_{0.2};
 
       // Goal position extracted from the latest global plan
-      struct GoalPoint { double x{0.0}; double y{0.0}; } goal_;
+      GoalPoint goal_;
+      std::string goal_frame_id_{""};
       bool has_plan_{false};
 
       // Effective speed limit factor [0, 1]

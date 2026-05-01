@@ -1,0 +1,8 @@
+# VS Code IntelliSense databases
+.vscode/browse.vc*.db
+.vscode/browse.vc*.db-wal
+.vscode/browse.vc*.db-shm
+
+# VS Code workspace settings are usually personal; uncomment to share them:
+# !.vscode/settings.json
+# !.vscode/c_cpp_properties.json

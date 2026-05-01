@@ -61,6 +61,7 @@ install(PROGRAMS
   src/motionModel.py
   src/sensorModel.py
   src/particleFilter.py
+  src/cmd_vel_bridge.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

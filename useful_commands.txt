@@ -1,40 +1,21 @@
-Some useful commands:
-source /opt/ros/jazzy/setup.bash
-export TURTLEBOT3_MODEL=burger                                                                
-ros2 launch turtlebot3_gazebo turtlebot3_house.launch.py 
-
-source /opt/ros/jazzy/setup.bash
-export TURTLEBOT3_MODEL=burger
-ros2 launch slam_toolbox online_async_launch.py
-
-source /opt/ros/jazzy/setup.bash
-ros2 run rviz2 rviz2
-Add by topic /map
-
-source /opt/ros/jazzy/setup.bash
-export TURTLEBOT3_MODEL=burger
-ros2 run turtlebot3_teleop teleop_keyboard
-
-source /opt/ros/jazzy/setup.bash
-ros2 run nav2_map_server map_saver_cli -f ~/map
-
-Nick: I used the above commands to run my program for D1
-
-D2:
+Run Commands:
 source /opt/ros/jazzy/setup.bash
 colcon build
 source install/setup.bash
 export TURTLEBOT3_MODEL=burger
-ros2 launch particle-filter-ros2 particle_filter.launch.py
+ros2 launch nlp_nav nlp_nav_launch.py
 
 source /opt/ros/jazzy/setup.bash
 source install/setup.bash
-ros2 run particle-filter-ros2 particleFilter.py
+ros2 run nlp_nav particleFilter.py
 
+Then Select the "2D Pose Estimation" Button in RViz and select the
+starting location of the robot. This will fix the Position misalignment
+
+
+For Manual Control:
 source /opt/ros/jazzy/setup.bash
 export TURTLEBOT3_MODEL=burger
 ros2 run turtlebot3_teleop teleop_keyboard
-
-Nick: to run the particleFilter.py file I had to use chmod to give the py files exe permissions.
 
 
