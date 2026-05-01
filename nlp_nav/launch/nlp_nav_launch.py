@@ -4,14 +4,14 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription
+from launch.actions import IncludeLaunchDescription, ExecuteProcess, RegisterEventHandler
+from launch.event_handlers import OnShutdown
 from launch_ros.actions import Node
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 
 
 def generate_launch_description():
-    turtlebot3_gazebo_pkg = get_package_share_directory('turtlebot3_gazebo')
     nav2_bringup_pkg = get_package_share_directory('nav2_bringup')
     pf_pkg = get_package_share_directory('nlp_nav')
 
@@ -21,11 +21,10 @@ def generate_launch_description():
 
     use_sim_time = LaunchConfiguration('use_sim_time', default='true')
 
-    # Gazebo + TurtleBot3
-    # /scan, /cmd_vel, /clock, /odom, /tf are bridged by turtlebot3_house.launch.py
+    # Gazebo + TurtleBot3 — uses our custom world with dynamic obstacle actors
     pre_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            os.path.join(turtlebot3_gazebo_pkg, 'launch', 'turtlebot3_house.launch.py')
+            os.path.join(pf_pkg, 'launch', 'turtlebot3_house_custom.launch.py')
         )
     )
 
@@ -99,7 +98,28 @@ def generate_launch_description():
         ],
     )
 
+    obstacle_mover = Node(
+        package='nlp_nav',
+        executable='obstacle_mover.py',
+        name='obstacle_mover',
+        output='screen',
+        parameters=[{'use_sim_time': use_sim_time}],
+    )
+
+    # Kill any lingering gz sim processes when the launch is shut down (Ctrl+C)
+    kill_gz_on_shutdown = RegisterEventHandler(
+        OnShutdown(
+            on_shutdown=[
+                ExecuteProcess(
+                    cmd=['bash', '-c', 'pkill -9 -f "gz sim" || true'],
+                    output='screen',
+                )
+            ]
+        )
+    )
+
     ld = LaunchDescription()
+    ld.add_action(kill_gz_on_shutdown)
     ld.add_action(pre_launch)
     ld.add_action(map_server)
     ld.add_action(map_lifecycle)
@@ -107,6 +127,7 @@ def generate_launch_description():
     ld.add_action(controller_server)
     ld.add_action(cmd_vel_bridge)
     ld.add_action(nav2_lifecycle)
+    ld.add_action(obstacle_mover)
     ld.add_action(rviz)
 
     return ld
