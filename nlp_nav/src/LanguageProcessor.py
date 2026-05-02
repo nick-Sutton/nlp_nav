@@ -1,12 +1,20 @@
 from ollama import chat
 from rclpy.node import Node
-from geometry_msg.msg import Pose
+from geometry_msgs.msg import PoseStamped
 
 class LanguageProcessor(Node):
+
     def __init__(self):
-        super().__init__('language_processor') # Initialize ROS node
+        super().__init__('language_processor')
+        self.publisher = self.create_publisher(PoseStamped, '/goal_pose', 10)   
+        
+
+
+    def main(self):
+        
+        #super().__init__('language_processor') # Initialize ROS node
         running = True
-        self.coord_dict = {
+        coord_dict = {
             "living room":(-6, 3.75),
             "bedroom":(-6.45, -1.35),
             "kitchen": (-3, 1.65),
@@ -15,7 +23,7 @@ class LanguageProcessor(Node):
             "library":(6.5, -4.5)
         }
         
-        self.publisher = self.create_publisher(Pose, "goal_pose", 10)
+        #self.publisher = self.create_publisher(Pose, "goal_pose", 10)
 
         while(running):
             print("What would you like me to do? (Type quit to stop)")
@@ -24,31 +32,53 @@ class LanguageProcessor(Node):
                 running = False
                 break
             
-            response = chat(
-            model='smallthinker',
-            messages=[{'role': 'system', 'content': 'You are an ai assistant that will interpret '
-            'user input and determine what room you need to go to in order to fulfill their request or statement.'
-            ' You will then output the room and its coordinate value from the coord_dict. This output MUST be like \'room,x,y\' no spaces, no puncuation. x and y are floats.'
-            'This is the coord_dict: {coord_dict}'}, 
-            {'role':'user', 'content':prompt}]
-            )
+            print(f"Got input {prompt}")
+            
+            printed = False
+            for i in range(5):
+                response = chat(
+                model='qwen2.5:3b',
+                messages=[{'role': 'system', 'content': 'You are an ai assistant that will interpret '
+                'user input and determine what room is most related to the statement '
+                f'This is the list of options: {coord_dict.keys()}' 
+                'output only one word'},
+                {'role':'user', 'content':prompt}], 
+                
+                )
+                room = response['message']['content']
+                if room in coord_dict.keys():
+                    printed = True
+                    break
 
-            data = response.split(',')
-            room = data[0]
-            x = data[1]
-            y = data[2]
+            if not printed:
+                print("I'm sorry, please try again.")
+                continue
+               
+            
 
-            if isinstance(5, float) and isinstance(y, int):
-                print("Moving to {room} ({x}, {y})")
-                msg = Pose()
-                msg.position.x = x
-                msg.position.y = y
-                self.publisher.publish(msg)
-            else:
-                print("Error making coords into floats, please try again.")
+            
+
+            
 
 
-        
+            
+            print(room)
+           
+            
+
+            x, y = coord_dict[room]
+            
+
+            print(f"Moving to {room} ({x}, {y})")
+            msg = PoseStamped()
+            msg.position.x = x
+            msg.position.y = y
+            self.publisher.publish(msg)
+       
+
+    if __name__ == '__main__':
+        main()
+
 
     
 
