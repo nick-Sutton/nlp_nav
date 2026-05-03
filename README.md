@@ -32,7 +32,7 @@ ros2 launch nlp_nav nlp_nav_launch.py moving_obstacles:=false
 The Dynamic enviroment adds moving obstacles to certain parts of the enviroment. These obstacles
 are meant to represent people that might be navigating the robots enviroment.
 ```
-ros2 launch nlp_nav nlp_nav_launch.py moving_obstacles:=false
+ros2 launch nlp_nav nlp_nav_launch.py moving_obstacles:=true
 ```
 
 #### In RViz:
