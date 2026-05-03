@@ -96,10 +96,17 @@ namespace nlp_nav {
       double beta_{0.2};
       double gamma_{0.2};
 
+      GoalPoint getLookahead(
+        const geometry_msgs::msg::PoseStamped & pose,
+        const GoalPoint & fallback) const;
+
       // Goal position extracted from the latest global plan
       GoalPoint goal_;
       std::string goal_frame_id_{""};
+      nav_msgs::msg::Path plan_;
       bool has_plan_{false};
+
+      double lookahead_dist_{0.5};
 
       // Effective speed limit factor [0, 1]
       double speed_limit_{1.0};

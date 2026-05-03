@@ -35,6 +35,7 @@ namespace nlp_nav {
         declare("alpha",          alpha_);
         declare("beta",           beta_);
         declare("gamma",          gamma_);
+        declare("lookahead_dist", lookahead_dist_);
 
         node->get_parameter(plugin_name_ + ".min_vel_x",       min_vel_x_);
         node->get_parameter(plugin_name_ + ".max_vel_x",       max_vel_x_);
@@ -49,6 +50,7 @@ namespace nlp_nav {
         node->get_parameter(plugin_name_ + ".alpha",           alpha_);
         node->get_parameter(plugin_name_ + ".beta",            beta_);
         node->get_parameter(plugin_name_ + ".gamma",           gamma_);
+        node->get_parameter(plugin_name_ + ".lookahead_dist",  lookahead_dist_);
 
         RCLCPP_INFO(node->get_logger(), "DWAController configured as '%s'", plugin_name_.c_str());
     }
@@ -59,6 +61,7 @@ namespace nlp_nav {
 
     void DWAController::setPlan(const nav_msgs::msg::Path & path) {
         if (!path.poses.empty()) {
+            plan_ = path;
             const auto & last = path.poses.back();
             goal_.x = last.pose.position.x;
             goal_.y = last.pose.position.y;
@@ -132,7 +135,8 @@ namespace nlp_nav {
             }
         }
 
-        Trajectory best = selectBest(candidates, goal_local);
+        GoalPoint target = getLookahead(pose, goal_local);
+        Trajectory best = selectBest(candidates, target);
         cmd.twist.linear.x  = best.vx;
         cmd.twist.angular.z = best.vth;
 
@@ -174,7 +178,7 @@ namespace nlp_nav {
                 return false;  // outside map bounds — treat as obstacle
             }
             uint8_t cost = costmap_->getCost(mx, my);
-            // NO_INFORMATION (255) is treated as free — only reject known lethal cells
+            // NO_INFORMATION (255) is treated as free — only reject known lethal cells.
             if (cost != nav2_costmap_2d::NO_INFORMATION &&
                 cost >= nav2_costmap_2d::LETHAL_OBSTACLE) {
                 return false;
@@ -198,6 +202,61 @@ namespace nlp_nav {
             }
         }
         return (min_dist == std::numeric_limits<double>::max()) ? 0.0 : min_dist;
+    }
+
+    DWAController::GoalPoint DWAController::getLookahead(
+        const geometry_msgs::msg::PoseStamped & pose,
+        const GoalPoint & fallback) const
+    {
+        if (plan_.poses.empty()) return fallback;
+
+        const double rx = pose.pose.position.x;
+        const double ry = pose.pose.position.y;
+        const std::string & plan_frame  = plan_.header.frame_id;
+        const std::string & robot_frame = pose.header.frame_id;
+
+        // Compute a single rigid-body transform: plan_frame → robot_frame
+        double tx = 0.0, ty = 0.0, cos_t = 1.0, sin_t = 0.0;
+        if (plan_frame != robot_frame) {
+            try {
+                auto tf_stamped = tf_->lookupTransform(
+                    robot_frame, plan_frame, tf2::TimePointZero);
+                tx    = tf_stamped.transform.translation.x;
+                ty    = tf_stamped.transform.translation.y;
+                double yaw = tf2::getYaw(tf_stamped.transform.rotation);
+                cos_t = std::cos(yaw);
+                sin_t = std::sin(yaw);
+            } catch (const tf2::TransformException &) {
+                return fallback;
+            }
+        }
+
+        // Transform all path points into robot frame
+        std::vector<std::pair<double, double>> pts;
+        pts.reserve(plan_.poses.size());
+        for (const auto & pp : plan_.poses) {
+            double px = cos_t * pp.pose.position.x - sin_t * pp.pose.position.y + tx;
+            double py = sin_t * pp.pose.position.x + cos_t * pp.pose.position.y + ty;
+            pts.push_back({px, py});
+        }
+
+        // Find the path point closest to the robot — never look behind this index
+        size_t closest_idx = 0;
+        double min_d = std::numeric_limits<double>::max();
+        for (size_t i = 0; i < pts.size(); ++i) {
+            double d = std::hypot(pts[i].first - rx, pts[i].second - ry);
+            if (d < min_d) { min_d = d; closest_idx = i; }
+        }
+
+        // From the closest point onward, return first point at >= lookahead_dist_
+        for (size_t i = closest_idx; i < pts.size(); ++i) {
+            if (std::hypot(pts[i].first - rx, pts[i].second - ry) >= lookahead_dist_) {
+                return GoalPoint{pts[i].first, pts[i].second};
+            }
+        }
+
+        // All remaining points are within lookahead — steer to final goal
+        return fallback;
     }
 
     Trajectory DWAController::selectBest(

@@ -10,8 +10,8 @@ controller_server:
     controller_plugins: ["FollowPath"]
     progress_checker:
       plugin: "nav2_controller::SimpleProgressChecker"
-      required_movement_radius: 0.5
-      movement_time_allowance: 10.0
+      required_movement_radius: 0.1
+      movement_time_allowance: 45.0
     general_goal_checker:
       stateful: true
       plugin: "nav2_controller::SimpleGoalChecker"
@@ -20,18 +20,19 @@ controller_server:
     FollowPath:
       plugin: "nlp_nav/DWAController"
       max_vel_x: 0.5
-      min_vel_x: 0.0
+      min_vel_x: -0.15
       acc_lim_x: 2.5
       max_vel_theta: 1.0
       acc_lim_theta: 3.2
       vx_step: 0.05
       vth_step: 0.1
-      sim_time: 1.5
+      sim_time: 1.0
       sim_granularity: 0.025
       dt: 0.1
-      alpha: 1.0
-      beta: 0.2
-      gamma: 0.2
+      alpha: 0.3
+      beta: 0.6
+      gamma: 1.5
+      lookahead_dist: 0.8
 
 local_costmap:
   local_costmap:
@@ -63,7 +64,7 @@ local_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0
-        inflation_radius: 0.55
+        inflation_radius: 0.30
       always_send_full_costmap: true
 
 global_costmap:
@@ -96,7 +97,7 @@ global_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0
-        inflation_radius: 0.55
+        inflation_radius: 0.30
       always_send_full_costmap: true
 
 planner_server:

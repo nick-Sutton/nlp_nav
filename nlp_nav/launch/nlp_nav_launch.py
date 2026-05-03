@@ -4,11 +4,12 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription, ExecuteProcess, RegisterEventHandler
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, ExecuteProcess, RegisterEventHandler
+from launch.conditions import IfCondition
 from launch.event_handlers import OnShutdown
 from launch_ros.actions import Node
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
 
 
 def generate_launch_description():
@@ -19,13 +20,15 @@ def generate_launch_description():
     map_yaml = os.path.join(pf_pkg, 'maps', 'map.yaml')
     nav2_params = os.path.join(pf_pkg, 'config', 'nav2_params.yaml')
 
-    use_sim_time = LaunchConfiguration('use_sim_time', default='true')
+    use_sim_time     = LaunchConfiguration('use_sim_time',     default='true')
+    moving_obstacles = LaunchConfiguration('moving_obstacles', default='false')
 
-    # Gazebo + TurtleBot3 — uses our custom world with dynamic obstacle actors
+    # Gazebo + TurtleBot3 — world chosen by moving_obstacles flag
     pre_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(pf_pkg, 'launch', 'turtlebot3_house_custom.launch.py')
-        )
+        ),
+        launch_arguments={'moving_obstacles': moving_obstacles}.items()
     )
 
     rviz = Node(
@@ -86,6 +89,7 @@ def generate_launch_description():
         parameters=[{'use_sim_time': use_sim_time}],
     )
 
+    # Manages controller_server only — isolated so global costmap issues don't stop navigation
     nav2_lifecycle = Node(
         package='nav2_lifecycle_manager',
         executable='lifecycle_manager',
@@ -94,8 +98,17 @@ def generate_launch_description():
         parameters=[
             {'use_sim_time': use_sim_time},
             {'autostart': True},
+            {'bond_timeout': 10.0},
             {'node_names': ['controller_server']},
         ],
+    )
+
+    global_planner = Node(
+        package='nlp_nav',
+        executable='globalPlanner.py',
+        name='global_planner',
+        output='screen',
+        parameters=[{'use_sim_time': use_sim_time}],
     )
 
     obstacle_mover = Node(
@@ -104,6 +117,7 @@ def generate_launch_description():
         name='obstacle_mover',
         output='screen',
         parameters=[{'use_sim_time': use_sim_time}],
+        condition=IfCondition(PythonExpression(["'", moving_obstacles, "' == 'true'"]))
     )
 
     # Kill any lingering gz sim processes when the launch is shut down (Ctrl+C)
@@ -119,6 +133,8 @@ def generate_launch_description():
     )
 
     ld = LaunchDescription()
+    ld.add_action(DeclareLaunchArgument('moving_obstacles', default_value='false',
+                                        description='Launch world with moving obstacles'))
     ld.add_action(kill_gz_on_shutdown)
     ld.add_action(pre_launch)
     ld.add_action(map_server)
@@ -128,6 +144,7 @@ def generate_launch_description():
     ld.add_action(cmd_vel_bridge)
     ld.add_action(nav2_lifecycle)
     ld.add_action(obstacle_mover)
+    ld.add_action(global_planner)
     ld.add_action(rviz)
 
     return ld

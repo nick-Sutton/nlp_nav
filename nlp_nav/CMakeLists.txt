@@ -63,6 +63,8 @@ install(PROGRAMS
   src/particleFilter.py
   src/cmd_vel_bridge.py
   src/obstacle_mover.py
+  src/globalPlanner.py
+  src/nlp.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
