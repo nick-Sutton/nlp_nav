@@ -8,6 +8,14 @@ Follow the instructions to install ROS2 Jazzy for Ubuntu 24.04 at: https://docs.
 #### Install the Turtlebot3 Simulation Package (for the Gazebo Simulation Environment)
 Carefully follow instructions at: https://emanual.robotis.com/docs/en/platform/turtlebot3/quick-start/ and install turtlebot3 simulation
 
+#### Ollama Installation
+Install Ollama using the installation instructions for your operating system https://ollama.com/download
+
+Then install the qwen2.5:3b model using ollama
+```
+ollama pull qwen2.5:3b
+```
+
 #### Install NLP-Nav
 In your ROS2 Workspace clone the NLP-Nav Repo:
 ```
@@ -25,7 +33,6 @@ export TURTLEBOT3_MODEL=burger
 The Static enviroment is a default house and includes no dynamic obstacles.
 ```
 ros2 launch nlp_nav nlp_nav_launch.py moving_obstacles:=false
-
 ```
 
 #### Dynamic Enviroment
@@ -46,6 +53,7 @@ Click the "+" sign in the RViz toolbar. Then under "rviz_default_plugins" select
 To perform planning select the "2D Goal Pose" in the toolbar. Then select a position on the map to navigate to. The robot will navigate to the selected position using the local and global planners.
 
 ## Navigating with Natural Language
+
 After running the Launch command run the following command in a seperate terminal:
 
 ```

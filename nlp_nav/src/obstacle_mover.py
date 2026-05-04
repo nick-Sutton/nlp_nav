@@ -18,9 +18,10 @@ except ImportError:
 
 # (model_name, x1, y1, x2, y2, period_seconds, phase_offset_seconds)
 OBSTACLES = [
-    ('obs_0',  0.0,  1.0,  0.0, -0.5, 10.0, 0.0),
-    ('obs_1',  1.5,  1.5, -0.5,  1.5, 12.0, 4.0),
-    ('obs_2', -1.5,  0.0, -1.5, -1.5,  8.0, 8.0),
+    ('obs_0',  0.0,  1.0,  0.0, -0.5, 20.0, 0.0),                      # red
+    ('obs_1',  -1.757,    4.36032,  -1.757,     2.86032,  16.0, 16.0),  # green
+    ('obs_2', -2.02724, 3.91556,  -4.02724, 3.91556,  16.0, 16.0),  # blue
+    # ('obs_2', -4.02724, 3.91556,  -4.02724,     0.91556,   8.0, 8.0),   # blue
 ]
 Z = 0.6   # centre of 1.2 m capsule (radius 0.3 + length 0.6) sitting on ground
 
