@@ -240,7 +240,7 @@ class GlobalPlanner(Node):
             return
 
         self.get_logger().info(
-            f'Planning: ({start.pose.position.x:.2f}, {start.pose.position.y:.2f}) → '
+            f'Planning: ({start.pose.position.x:.2f}, {start.pose.position.y:.2f}) -> '
             f'({goal.pose.position.x:.2f}, {goal.pose.position.y:.2f})')
 
         path = self._a_star(start, goal, cm)
