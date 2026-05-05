@@ -107,12 +107,6 @@ namespace nlp_nav {
             }
         }
 
-        if (candidates.empty()) {
-            // No safe trajectory found — stop and rotate in place
-            cmd.twist.angular.z = (max_vth > 0.0) ? max_vth : 0.0;
-            return cmd;
-        }
-
         // Transform the stored goal from its original frame (map) into the
         // frame the pose is expressed in (odom) so heading scoring is consistent.
         GoalPoint goal_local = goal_;
@@ -135,15 +129,74 @@ namespace nlp_nav {
             }
         }
 
+        if (candidates.empty()) {
+            // No safe trajectory found — rotate toward the goal
+            const double robot_yaw_e = tf2::getYaw(pose.pose.orientation);
+            const double angle_to_goal_e = std::atan2(
+                goal_local.y - pose.pose.position.y,
+                goal_local.x - pose.pose.position.x);
+            const double err_e = std::atan2(
+                std::sin(angle_to_goal_e - robot_yaw_e),
+                std::cos(angle_to_goal_e - robot_yaw_e));
+            cmd.twist.angular.z = (err_e >= 0.0) ? max_vth : -max_vth;
+            return cmd;
+        }
+
         GoalPoint target = getLookahead(pose, goal_local);
+
         Trajectory best = selectBest(candidates, target);
         cmd.twist.linear.x  = best.vx;
         cmd.twist.angular.z = best.vth;
 
+        if (cmd.twist.linear.x <= 0.0) {
+            consecutive_stall_++;
+        } else {
+            consecutive_stall_ = 0;
+        }
+
+        if (consecutive_stall_ > 10) {
+            std::vector<Trajectory> fwd;
+            for (const auto & t : candidates) {
+                if (t.vx > 0.0) fwd.push_back(t);
+            }
+            if (!fwd.empty()) {
+                Trajectory recovery = selectBest(fwd, target);
+                cmd.twist.linear.x  = recovery.vx;
+                cmd.twist.angular.z = recovery.vth;
+                consecutive_stall_ = 0;
+            } else {
+                // Fully boxed in: pick the rotation that opens up the clearest
+                // forward path rather than rotating toward the goal (which may
+                // be through a wall). Probe a forward step from each rotated pose.
+                double best_clearance = -1.0;
+                double best_rot_vth   = max_vth;
+                for (const auto & rot : candidates) {
+                    if (rot.points.empty()) continue;
+                    geometry_msgs::msg::PoseStamped rotated = pose;
+                    const double ey = rot.points.back().yaw;
+                    tf2::Quaternion q;
+                    q.setRPY(0.0, 0.0, ey);
+                    rotated.pose.orientation.x = q.x();
+                    rotated.pose.orientation.y = q.y();
+                    rotated.pose.orientation.z = q.z();
+                    rotated.pose.orientation.w = q.w();
+                    Trajectory probe = simulateTrajectory(rotated, max_vel_x_ * 0.5, 0.0);
+                    double cl = isCollisionFree(probe) ? minObstacleDist(probe) : -1.0;
+                    if (cl > best_clearance) {
+                        best_clearance = cl;
+                        best_rot_vth   = rot.vth;
+                    }
+                }
+                cmd.twist.angular.z = best_rot_vth;
+                // Keep consecutive_stall_ high so this fires every iteration
+                // until rotation opens a forward path
+            }
+        }
+
         auto node = node_.lock();
         RCLCPP_INFO_THROTTLE(node->get_logger(), *node->get_clock(), 1000,
             "DWA: %zu candidates, sending vx=%.3f vth=%.3f",
-            candidates.size(), best.vx, best.vth);
+            candidates.size(), cmd.twist.linear.x, cmd.twist.angular.z);
 
         return cmd;
     }
@@ -178,9 +231,10 @@ namespace nlp_nav {
                 return false;  // outside map bounds — treat as obstacle
             }
             uint8_t cost = costmap_->getCost(mx, my);
-            // NO_INFORMATION (255) is treated as free — only reject known lethal cells.
+            // Reject INSCRIBED_INFLATED (253) and above: at 253 the robot footprint
+            // already touches an obstacle, so the cell is not safely traversable.
             if (cost != nav2_costmap_2d::NO_INFORMATION &&
-                cost >= nav2_costmap_2d::LETHAL_OBSTACLE) {
+                cost >= nav2_costmap_2d::INSCRIBED_INFLATED_OBSTACLE) {
                 return false;
             }
         }
@@ -277,8 +331,12 @@ namespace nlp_nav {
             heading_diff = std::atan2(std::sin(heading_diff), std::cos(heading_diff));
             const double heading = M_PI - std::abs(heading_diff);
 
-            // Clearance: normalised min obstacle distance along trajectory
-            const double clearance = minObstacleDist(traj);
+            // Clearance: normalised min obstacle distance along trajectory.
+            // Zero-velocity trajectories stay in place, so minObstacleDist always
+            // returns the cost at the robot's current (free) position — an unfair
+            // advantage over forward trajectories that traverse inflation zones.
+            // Setting clearance=0 for vx=0 removes this bias.
+            const double clearance = (std::abs(traj.vx) < 1e-9) ? 0.0 : minObstacleDist(traj);
 
             // DWA objective: G(v,ω) = α·heading + β·clearance + γ·velocity
             const double score = alpha_ * heading + beta_ * clearance + gamma_ * traj.vx;

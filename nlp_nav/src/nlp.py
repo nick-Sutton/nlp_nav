@@ -6,12 +6,12 @@ from ollama import chat
 
 
 COORD_DICT = {
-    "living room": (-6.0,   3.75),
-    "bedroom":     (-6.45, -1.35),
-    "kitchen":     (-2.97,  1.65),
-    "laundry":     ( 1.00,  2.16),
-    "office":      ( 5.1,   1.45),
-    "library":     ( 6.5,  -4.5),
+    "living room": (-3.52,  3.80),
+    "bedroom":     (-4.32, -0.20),
+    "kitchen":     (-2.92,  3.00),
+    "laundry":     (-0.52,  3.60),
+    "office":      ( 6.58,  3.50),
+    "library":     ( 4.78, -1.80),
 }
 
 SYSTEM_PROMPT = (

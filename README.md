@@ -11,6 +11,11 @@ Carefully follow instructions at: https://emanual.robotis.com/docs/en/platform/t
 #### Ollama Installation
 Install Ollama using the installation instructions for your operating system https://ollama.com/download
 
+Install the Ollama Python Package
+```
+pip install ollama
+```
+
 Then install the qwen2.5:3b model using ollama
 ```
 ollama pull qwen2.5:3b
@@ -53,6 +58,10 @@ Click the "+" sign in the RViz toolbar. Then under "rviz_default_plugins" select
 To perform planning select the "2D Goal Pose" in the toolbar. Then select a position on the map to navigate to. The robot will navigate to the selected position using the local and global planners.
 
 ## Navigating with Natural Language
+Run this command to start the Ollama server:
+```
+ollama serve &
+```
 
 After running the Launch command run the following command in a seperate terminal:
 

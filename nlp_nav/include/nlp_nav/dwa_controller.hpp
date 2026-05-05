@@ -110,6 +110,9 @@ namespace nlp_nav {
 
       // Effective speed limit factor [0, 1]
       double speed_limit_{1.0};
+
+      // Consecutive iterations with zero forward velocity — used for stall recovery
+      int consecutive_stall_{0};
     };
 
 }  // namespace nlp_nav
