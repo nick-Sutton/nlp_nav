@@ -90,6 +90,7 @@ class GlobalPlanner(Node):
         self.create_subscription(OccupancyGrid, '/map', self._save_map, map_qos)
         self.create_subscription(PoseStamped, '/goal_pose', self._on_goal, 10)
         self.get_logger().info('GlobalPlanner ready — waiting for goal on /goal_pose')
+        self.pub = self.create_publisher(Path, "/plan", 10)
 
     def _save_map(self, msg: OccupancyGrid) -> None:
         self._map = msg
@@ -249,6 +250,7 @@ class GlobalPlanner(Node):
             return
 
         self.get_logger().info(f'Path found: {len(path.poses)} waypoints — executing')
+        self.pub.publish(path)
         self.navigator.followPath(path)
 
 
