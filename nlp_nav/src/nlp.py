@@ -7,7 +7,7 @@ from ollama import chat
 
 COORD_DICT = {
     "living room": (-4.0,  4.0),
-    "bedroom":     (-1.3, -1.7),
+    "bedroom":     (-4.5, -0.9),
     "kitchen":     (-0.8,  2.00),
     "laundry":     (2.8,  2.00),
     "office":      ( 7.0,  2.0),

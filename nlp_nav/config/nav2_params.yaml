@@ -29,9 +29,9 @@ controller_server:
       sim_time: 2.5
       sim_granularity: 0.05
       dt: 0.3
-      alpha: 1.2
-      beta: 1.5
-      gamma: 0.3
+      alpha: 0.8
+      beta: 0.7
+      gamma: 0.4
       lookahead_dist: 0.50
 
 local_costmap:
