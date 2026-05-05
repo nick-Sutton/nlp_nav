@@ -1,5 +1,8 @@
 # NLP_Nav
 
+> [!NOTE]
+> NLP-Navs Dynamic obstacle avoidance and Controller perfrmance is heavily dependent on the computing power of the system running it. Poor computing power can lead to more frequent local minima.
+
 ## Installation
 
 #### Install ROS2 Jazzy
@@ -32,6 +35,12 @@ git clone https://github.com/nick-Sutton/nlp_nav.git
 source /opt/ros/jazzy/setup.bash
 colcon build --packages-select nlp_nav && source install/setup.bash
 export TURTLEBOT3_MODEL=burger
+```
+
+> [!NOTE]
+> You might get an error related to libdastcdr. If so run:
+```
+ln -s /opt/ros/jazzy/lib/libfastcdr.so.2.2.7 /opt/ros/jazzy/lib/libfastcdr.so.2.2.5
 ```
 
 #### Static Enviroment

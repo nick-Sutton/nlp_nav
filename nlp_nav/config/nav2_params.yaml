@@ -20,26 +20,26 @@ controller_server:
     FollowPath:
       plugin: "nlp_nav/DWAController"
       max_vel_x: 0.5
-      min_vel_x: 0.0
+      min_vel_x: -0.15
       acc_lim_x: 2.5
       max_vel_theta: 1.0
       acc_lim_theta: 3.2
       vx_step: 0.05
       vth_step: 0.1
-      sim_time: 2.0
-      sim_granularity: 0.025
-      dt: 0.1
-      alpha: 2.0
-      beta: 2.0
-      gamma: 0.8
-      lookahead_dist: 0.35
+      sim_time: 2.5
+      sim_granularity: 0.05
+      dt: 0.3
+      alpha: 1.2
+      beta: 1.5
+      gamma: 0.3
+      lookahead_dist: 0.50
 
 local_costmap:
   local_costmap:
     ros__parameters:
       use_sim_time: true
-      update_frequency: 5.0
-      publish_frequency: 2.0
+      update_frequency: 10.0
+      publish_frequency: 5.0
       global_frame: odom
       robot_base_frame: base_footprint
       rolling_window: true
@@ -64,7 +64,7 @@ local_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0
-        inflation_radius: 0.30
+        inflation_radius: 0.35
       always_send_full_costmap: true
 
 global_costmap:
@@ -97,7 +97,7 @@ global_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0
-        inflation_radius: 0.45
+        inflation_radius: 0.35
       always_send_full_costmap: true
 
 planner_server:

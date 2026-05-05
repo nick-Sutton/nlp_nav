@@ -19,23 +19,24 @@ namespace nlp_nav {
         // Declare params
         auto declare = [&](const std::string & key, double default_val) {
             if (!node->has_parameter(plugin_name_ + "." + key)) {
-            node->declare_parameter(plugin_name_ + "." + key, default_val);}
+                node->declare_parameter(plugin_name_ + "." + key, default_val);
+            }
         };
 
-        declare("min_vel_x",      min_vel_x_);
-        declare("max_vel_x",      max_vel_x_);
-        declare("acc_lim_x",      acc_lim_x_);
-        declare("max_vel_theta",  max_vel_theta_);
-        declare("acc_lim_theta",  acc_lim_theta_);
-        declare("vx_step",        vx_step_);
-        declare("vth_step",       vth_step_);
-        declare("sim_time",       sim_time_);
+        declare("min_vel_x",       min_vel_x_);
+        declare("max_vel_x",       max_vel_x_);
+        declare("acc_lim_x",       acc_lim_x_);
+        declare("max_vel_theta",   max_vel_theta_);
+        declare("acc_lim_theta",   acc_lim_theta_);
+        declare("vx_step",         vx_step_);
+        declare("vth_step",        vth_step_);
+        declare("sim_time",        sim_time_);
         declare("sim_granularity", sim_granularity_);
-        declare("dt",             dt_);
-        declare("alpha",          alpha_);
-        declare("beta",           beta_);
-        declare("gamma",          gamma_);
-        declare("lookahead_dist", lookahead_dist_);
+        declare("dt",              dt_);
+        declare("alpha",           alpha_);
+        declare("beta",            beta_);
+        declare("gamma",           gamma_);
+        declare("lookahead_dist",  lookahead_dist_);
 
         node->get_parameter(plugin_name_ + ".min_vel_x",       min_vel_x_);
         node->get_parameter(plugin_name_ + ".max_vel_x",       max_vel_x_);
@@ -55,8 +56,8 @@ namespace nlp_nav {
         RCLCPP_INFO(node->get_logger(), "DWAController configured as '%s'", plugin_name_.c_str());
     }
 
-    void DWAController::cleanup()  {}
-    void DWAController::activate() {}
+    void DWAController::cleanup()   {}
+    void DWAController::activate()  {}
     void DWAController::deactivate() {}
 
     void DWAController::setPlan(const nav_msgs::msg::Path & path) {
@@ -67,6 +68,8 @@ namespace nlp_nav {
             goal_.y = last.pose.position.y;
             goal_frame_id_ = path.header.frame_id;
             has_plan_ = true;
+            // Reset stall counter on new plan so recovery doesn't trigger immediately
+            consecutive_stall_ = 0;
         }
     }
 
@@ -78,7 +81,7 @@ namespace nlp_nav {
     geometry_msgs::msg::TwistStamped DWAController::computeVelocityCommands(
         const geometry_msgs::msg::PoseStamped & pose,
         const geometry_msgs::msg::Twist & velocity,
-        nav2_core::GoalChecker * /*goal_checker*/) 
+        nav2_core::GoalChecker * /*goal_checker*/)
     {
         geometry_msgs::msg::TwistStamped cmd;
         cmd.header = pose.header;
@@ -99,7 +102,6 @@ namespace nlp_nav {
         std::vector<Trajectory> candidates;
         for (double vx = min_vx; vx <= max_vx + 1e-9; vx += vx_step_) {
             for (double vth = min_vth; vth <= max_vth + 1e-9; vth += vth_step_) {
-
                 Trajectory traj = simulateTrajectory(pose, vx, vth);
                 if (isCollisionFree(traj)) {
                     candidates.push_back(traj);
@@ -129,74 +131,76 @@ namespace nlp_nav {
             }
         }
 
-        if (candidates.empty()) {
-            // No safe trajectory found — rotate toward the goal
-            const double robot_yaw_e = tf2::getYaw(pose.pose.orientation);
-            const double angle_to_goal_e = std::atan2(
-                goal_local.y - pose.pose.position.y,
-                goal_local.x - pose.pose.position.x);
-            const double err_e = std::atan2(
-                std::sin(angle_to_goal_e - robot_yaw_e),
-                std::cos(angle_to_goal_e - robot_yaw_e));
-            cmd.twist.angular.z = (err_e >= 0.0) ? max_vth : -max_vth;
-            return cmd;
-        }
-
         GoalPoint target = getLookahead(pose, goal_local);
 
-        Trajectory best = selectBest(candidates, target);
-        cmd.twist.linear.x  = best.vx;
-        cmd.twist.angular.z = best.vth;
+        // Pre-compute forward candidates before stall logic.
+        std::vector<Trajectory> fwd;
+        for (const auto & t : candidates) {
+            if (t.vx > 0.0) fwd.push_back(t);
+        }
 
-        if (cmd.twist.linear.x <= 0.0) {
+        // Only count a stall when no forward path exists at all.
+        if (fwd.empty()) {
             consecutive_stall_++;
         } else {
             consecutive_stall_ = 0;
         }
 
         if (consecutive_stall_ > 10) {
-            std::vector<Trajectory> fwd;
-            for (const auto & t : candidates) {
-                if (t.vx > 0.0) fwd.push_back(t);
+            // back up straight to create room
+            if (consecutive_stall_ <= 20) {
+                cmd.twist.linear.x  = -max_vel_x_ * 0.4;
+                cmd.twist.angular.z = 0.0;
+                consecutive_stall_++;
+                auto node = node_.lock();
+                RCLCPP_WARN_THROTTLE(node->get_logger(), *node->get_clock(), 500,
+                    "DWA stall recovery PHASE 1 (backup), count=%d", consecutive_stall_);
             }
-            if (!fwd.empty()) {
-                Trajectory recovery = selectBest(fwd, target);
-                cmd.twist.linear.x  = recovery.vx;
-                cmd.twist.angular.z = recovery.vth;
+            // rotate toward the next lookahead waypoint
+            else if (consecutive_stall_ <= 30) {
+                const double robot_yaw = tf2::getYaw(pose.pose.orientation);
+                const double angle_to_target = std::atan2(
+                    target.y - pose.pose.position.y,
+                    target.x - pose.pose.position.x);
+                const double err = std::atan2(
+                    std::sin(angle_to_target - robot_yaw),
+                    std::cos(angle_to_target - robot_yaw));
+                cmd.twist.angular.z = (err >= 0.0) ? max_vel_theta_ : -max_vel_theta_;
+                consecutive_stall_++;
+                auto node = node_.lock();
+                RCLCPP_WARN_THROTTLE(node->get_logger(), *node->get_clock(), 500,
+                    "DWA stall recovery PHASE 2 (rotate), count=%d", consecutive_stall_);
+            }
+            // recovery cycle complete, reset and try DWA normally again
+            else {
                 consecutive_stall_ = 0;
-            } else {
-                // Fully boxed in: pick the rotation that opens up the clearest
-                // forward path rather than rotating toward the goal (which may
-                // be through a wall). Probe a forward step from each rotated pose.
-                double best_clearance = -1.0;
-                double best_rot_vth   = max_vth;
-                for (const auto & rot : candidates) {
-                    if (rot.points.empty()) continue;
-                    geometry_msgs::msg::PoseStamped rotated = pose;
-                    const double ey = rot.points.back().yaw;
-                    tf2::Quaternion q;
-                    q.setRPY(0.0, 0.0, ey);
-                    rotated.pose.orientation.x = q.x();
-                    rotated.pose.orientation.y = q.y();
-                    rotated.pose.orientation.z = q.z();
-                    rotated.pose.orientation.w = q.w();
-                    Trajectory probe = simulateTrajectory(rotated, max_vel_x_ * 0.5, 0.0);
-                    double cl = isCollisionFree(probe) ? minObstacleDist(probe) : -1.0;
-                    if (cl > best_clearance) {
-                        best_clearance = cl;
-                        best_rot_vth   = rot.vth;
-                    }
-                }
-                cmd.twist.angular.z = best_rot_vth;
-                // Keep consecutive_stall_ high so this fires every iteration
-                // until rotation opens a forward path
             }
+            return cmd;
         }
+
+        if (candidates.empty()) {
+            // Rotate toward the next waypoint to try to open up a path
+            const double robot_yaw = tf2::getYaw(pose.pose.orientation);
+            const double angle_to_target = std::atan2(
+                target.y - pose.pose.position.y,
+                target.x - pose.pose.position.x);
+            const double err = std::atan2(
+                std::sin(angle_to_target - robot_yaw),
+                std::cos(angle_to_target - robot_yaw));
+            cmd.twist.angular.z = (err >= 0.0) ? max_vel_theta_ : -max_vel_theta_;
+            return cmd;
+        }
+
+        // Normal DWA: pick the best scored trajectory
+        GoalPoint robot_pos{pose.pose.position.x, pose.pose.position.y};
+        Trajectory best = selectBest(candidates, target, robot_pos);
+        cmd.twist.linear.x  = best.vx;
+        cmd.twist.angular.z = best.vth;
 
         auto node = node_.lock();
         RCLCPP_INFO_THROTTLE(node->get_logger(), *node->get_clock(), 1000,
-            "DWA: %zu candidates, sending vx=%.3f vth=%.3f",
-            candidates.size(), cmd.twist.linear.x, cmd.twist.angular.z);
+            "DWA: %zu candidates, sending vx=%.3f vth=%.3f stall=%d",
+            candidates.size(), cmd.twist.linear.x, cmd.twist.angular.z, consecutive_stall_);
 
         return cmd;
     }
@@ -228,11 +232,10 @@ namespace nlp_nav {
         for (const auto & pt : traj.points) {
             unsigned int mx, my;
             if (!costmap_->worldToMap(pt.x, pt.y, mx, my)) {
-                return false;  // outside map bounds — treat as obstacle
+                return false;  // outside map bounds
             }
             uint8_t cost = costmap_->getCost(mx, my);
-            // Reject INSCRIBED_INFLATED (253) and above: at 253 the robot footprint
-            // already touches an obstacle, so the cell is not safely traversable.
+            // Reject INSCRIBED_INFLATED (253) and above
             if (cost != nav2_costmap_2d::NO_INFORMATION &&
                 cost >= nav2_costmap_2d::INSCRIBED_INFLATED_OBSTACLE) {
                 return false;
@@ -243,19 +246,16 @@ namespace nlp_nav {
 
     double DWAController::minObstacleDist(const Trajectory & traj)
     {
-        double min_dist = std::numeric_limits<double>::max();
+        double sum   = 0.0;
+        int    count = 0;
         for (const auto & pt : traj.points) {
             unsigned int mx, my;
             if (!costmap_->worldToMap(pt.x, pt.y, mx, my)) { continue; }
-
-            // Normalise cost [0, LETHAL) → distance [1, 0)
-            double dist = 1.0 - static_cast<double>(costmap_->getCost(mx, my)) /
-                                nav2_costmap_2d::LETHAL_OBSTACLE;
-            if (dist < min_dist) {
-                min_dist = dist;
-            }
+            sum += 1.0 - static_cast<double>(costmap_->getCost(mx, my)) /
+                         nav2_costmap_2d::LETHAL_OBSTACLE;
+            ++count;
         }
-        return (min_dist == std::numeric_limits<double>::max()) ? 0.0 : min_dist;
+        return (count == 0) ? 0.0 : sum / count;
     }
 
     DWAController::GoalPoint DWAController::getLookahead(
@@ -269,7 +269,6 @@ namespace nlp_nav {
         const std::string & plan_frame  = plan_.header.frame_id;
         const std::string & robot_frame = pose.header.frame_id;
 
-        // Compute a single rigid-body transform: plan_frame → robot_frame
         double tx = 0.0, ty = 0.0, cos_t = 1.0, sin_t = 0.0;
         if (plan_frame != robot_frame) {
             try {
@@ -294,7 +293,7 @@ namespace nlp_nav {
             pts.push_back({px, py});
         }
 
-        // Find the path point closest to the robot — never look behind this index
+        // Find the path point closest to the robot 
         size_t closest_idx = 0;
         double min_d = std::numeric_limits<double>::max();
         for (size_t i = 0; i < pts.size(); ++i) {
@@ -302,44 +301,70 @@ namespace nlp_nav {
             if (d < min_d) { min_d = d; closest_idx = i; }
         }
 
-        // From the closest point onward, return first point at >= lookahead_dist_
+        // From the closest point onward, return the first point that is:
+        //   (a) at least lookahead_dist_ from the robot, AND
+        //   (b) not inside an obstacle (cost < INSCRIBED_INFLATED_OBSTACLE)
+        // This prevents the robot from being pulled toward a wall by a path
+        // that passes through inflated obstacle space.
         for (size_t i = closest_idx; i < pts.size(); ++i) {
-            if (std::hypot(pts[i].first - rx, pts[i].second - ry) >= lookahead_dist_) {
-                return GoalPoint{pts[i].first, pts[i].second};
+            double d = std::hypot(pts[i].first - rx, pts[i].second - ry);
+            if (d >= lookahead_dist_) {
+                // Verify the candidate target is collision-free on the costmap
+                unsigned int mx, my;
+                if (costmap_->worldToMap(pts[i].first, pts[i].second, mx, my)) {
+                    uint8_t cost = costmap_->getCost(mx, my);
+                    if (cost == nav2_costmap_2d::NO_INFORMATION ||
+                        cost < nav2_costmap_2d::INSCRIBED_INFLATED_OBSTACLE) {
+                        return GoalPoint{pts[i].first, pts[i].second};
+                    }
+                    // Point is in obstacle space — keep searching further along path
+                }
             }
         }
 
-        // All remaining points are within lookahead — steer to final goal
+        // All remaining points are within lookahead or in obstacles — steer to final goal
         return fallback;
     }
 
     Trajectory DWAController::selectBest(
         const std::vector<Trajectory> & candidates,
-        const GoalPoint & goal)
+        const GoalPoint & goal,
+        const GoalPoint & robot_pos)
     {
         Trajectory best;
         double best_score = -std::numeric_limits<double>::infinity();
+
+        // Compute the goal direction once from the robot's current position.
+        const double goal_angle = std::atan2(
+            goal.y - robot_pos.y,
+            goal.x - robot_pos.x);
 
         for (const auto & traj : candidates) {
             if (traj.points.empty()) { continue; }
             const auto & end = traj.points.back();
 
-            // Heading: angle difference between trajectory end and goal direction.
-            // Normalize to [-π, π] to keep the score in [0, π].
-            const double goal_angle = std::atan2(goal.y - end.y, goal.x - end.x);
+            // Heading: how well the trajectory endpoint's yaw aligns with the
+            // direction from the robot's current position toward the target.
+            // Normalised to [0, 1] — higher is better.
             double heading_diff = end.yaw - goal_angle;
             heading_diff = std::atan2(std::sin(heading_diff), std::cos(heading_diff));
-            const double heading = M_PI - std::abs(heading_diff);
+            const double heading = (M_PI - std::abs(heading_diff)) / M_PI;
 
-            // Clearance: normalised min obstacle distance along trajectory.
-            // Zero-velocity trajectories stay in place, so minObstacleDist always
-            // returns the cost at the robot's current (free) position — an unfair
-            // advantage over forward trajectories that traverse inflation zones.
-            // Setting clearance=0 for vx=0 removes this bias.
-            const double clearance = (std::abs(traj.vx) < 1e-9) ? 0.0 : minObstacleDist(traj);
+            // Clearance: already in [0,1] from minObstacleDist.
+            // Zero-velocity trajectories stay in place — penalise them so the robot
+            // doesn't score a free clearance bonus for standing still.
+            const double clearance = (std::abs(traj.vx) < 1e-9 &&
+                                      std::abs(traj.vth) < 1e-9) ? 0.0 : minObstacleDist(traj);
 
-            // DWA objective: G(v,ω) = α·heading + β·clearance + γ·velocity
-            const double score = alpha_ * heading + beta_ * clearance + gamma_ * traj.vx;
+            // Velocity: normalised forward speed. Reverse trajectories score 0 here
+            // so they are only selected when no forward option exists.
+            const double velocity = std::max(0.0, traj.vx / max_vel_x_);
+
+            // DWA objective: G = α·heading + β·clearance + γ·velocity
+            const double score = alpha_ * heading
+                               + beta_  * clearance
+                               + gamma_ * velocity;
+
             if (score > best_score) {
                 best_score = score;
                 best = traj;

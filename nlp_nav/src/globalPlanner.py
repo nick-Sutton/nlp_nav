@@ -15,13 +15,13 @@ from nav2_simple_commander.robot_navigator import BasicNavigator
 
 # Must match nav2_params.yaml values
 ROBOT_RADIUS     = 0.22
-INFLATION_RADIUS = 0.30
+INFLATION_RADIUS = 0.35
 COST_SCALING     = 3.0
 FREE_THRESH      = 100   # A* treats cells with cost >= this as blocked
 
 
 class MapCostmap:
-    """Inflated costmap built from a static OccupancyGrid, no lifecycle nodes required."""
+    """Inflated costmap built from a static OccupancyGrid."""
 
     def __init__(self, grid: OccupancyGrid) -> None:
         info = grid.info
