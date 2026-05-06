@@ -40,7 +40,7 @@ class LanguageProcessor(Node):
             if not prompt:
                 continue
 
-            print(f"Processing: {prompt}")
+            print(f"Thinking...")
 
             room = None
             for attempt in range(5):
